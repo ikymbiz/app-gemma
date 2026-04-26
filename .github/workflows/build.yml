@@ -1,1 +1,129 @@
+name: Build
 
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  debug:
+    name: Debug APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      # ---- 層 0: 現状把握 ----
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show context
+        run: |
+          echo "=== Repository contents ==="
+          ls -la
+          echo "=== Git info ==="
+          git log -1 --oneline
+
+      # ---- 層 1: ZIP 自動展開 ----
+      - name: Auto-extract ZIP files
+        run: |
+          shopt -s nullglob
+          extracted=false
+          for z in *.zip; do
+            echo "📦 Extracting $z"
+            unzip -o "$z"
+            extracted=true
+          done
+          if [ "$extracted" = true ]; then
+            echo "=== After extraction ==="
+            ls -la
+          fi
+
+      # ---- 層 2: プロジェクトルート自動検出 ----
+      - name: Locate Gradle project
+        id: find
+        run: |
+          SETTINGS=$(find . -maxdepth 4 -type f \
+            \( -name "settings.gradle.kts" -o -name "settings.gradle" \) \
+            -not -path "./.git/*" 2>/dev/null | head -n1)
+          if [ -z "$SETTINGS" ]; then
+            echo "::error::settings.gradle(.kts) が見つかりません"
+            exit 1
+          fi
+          ROOT=$(dirname "$SETTINGS")
+          ROOT="${ROOT#./}"
+          [ -z "$ROOT" ] && ROOT="."
+          echo "✅ Gradle project root: '$ROOT'"
+          echo "root=$ROOT" >> "$GITHUB_OUTPUT"
+          if [ "$ROOT" = "." ]; then
+            echo "prefix=" >> "$GITHUB_OUTPUT"
+          else
+            echo "prefix=$ROOT/" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ---- JDK & Gradle ----
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: "8.7"
+          build-root-directory: ${{ steps.find.outputs.root }}
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+
+      # ---- 層 3: Gradle Wrapper 自動生成 ----
+      - name: Generate Gradle wrapper if missing
+        working-directory: ${{ steps.find.outputs.root }}
+        run: |
+          if [ ! -f gradlew ]; then
+            echo "⚙️ gradlew が見つかりません。自動生成します..."
+            gradle wrapper --gradle-version 8.7 --distribution-type bin
+          fi
+          chmod +x gradlew
+          echo "✅ gradlew 準備完了"
+
+      # ---- Lint（失敗してもビルド継続） ----
+      - name: Lint
+        working-directory: ${{ steps.find.outputs.root }}
+        run: ./gradlew lintDebug --no-daemon
+        continue-on-error: true
+
+      # ---- ビルド ----
+      - name: Build debug APK
+        working-directory: ${{ steps.find.outputs.root }}
+        run: ./gradlew assembleDebug --no-daemon --stacktrace -x test
+
+      # ---- 層 4: 成果物回収（prefix 必須） ----
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug
+          path: ${{ steps.find.outputs.prefix }}app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload lint report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lint-report
+          path: ${{ steps.find.outputs.prefix }}app/build/reports/lint-results-debug.html
+          if-no-files-found: ignore
+          retention-days: 7
+
+      # ---- 失敗時デバッグダンプ ----
+      - name: Debug dump on failure
+        if: failure()
+        run: |
+          echo "=== File system ==="
+          find . -maxdepth 3 -not -path "./.git/*" | sort
+          echo "=== Gradle tasks ==="
+          cd ${{ steps.find.outputs.root }} && ./gradlew tasks --all 2>/dev/null | head -50 || true
