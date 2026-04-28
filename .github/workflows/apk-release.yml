@@ -1,0 +1,153 @@
+name: APK Release
+
+# 用途: ZIP配布された Android プロジェクトを release APK としてビルドし、GitHub Release に添付する
+# トリガー: タグ push (vX.Y.Z) または 手動実行
+# 署名: secrets.KEYSTORE_BASE64 等が設定されていれば署名APK、未設定なら unsigned で続行
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v1.0.0)"
+        required: true
+        default: "v1.0.0"
+
+jobs:
+  release:
+    name: Build & Release APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: write   # GitHub Release 作成に必要
+
+    steps:
+      # ---- 層 0: 現状把握 ----
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show context
+        run: ls -la
+
+      # ---- 層 1: ZIP 自動展開 ----
+      - name: Auto-extract archives
+        run: |
+          shopt -s nullglob
+          for z in *.zip; do
+            echo "📦 Extracting ZIP: $z"
+            unzip -oq "$z"
+          done
+          for t in *.tar.gz *.tgz; do
+            echo "📦 Extracting tarball: $t"
+            tar xzf "$t"
+          done
+          rm -rf __MACOSX
+          find . -name ".DS_Store" -delete 2>/dev/null || true
+          ls -la
+
+      # ---- 層 2: Gradle プロジェクトのルートを自動検出 ----
+      - name: Locate Gradle project
+        id: find
+        run: |
+          SETTINGS=$(find . -maxdepth 4 -type f \
+            \( -name "settings.gradle.kts" -o -name "settings.gradle" \) \
+            -not -path "./.git/*" 2>/dev/null | head -n1)
+          if [ -z "$SETTINGS" ]; then
+            echo "::error::settings.gradle(.kts) not found."
+            exit 1
+          fi
+          ROOT=$(dirname "$SETTINGS")
+          ROOT="${ROOT#./}"
+          [ -z "$ROOT" ] && ROOT="."
+          echo "✅ Gradle project root: '$ROOT'"
+          echo "root=$ROOT" >> "$GITHUB_OUTPUT"
+          if [ "$ROOT" = "." ]; then
+            echo "prefix=" >> "$GITHUB_OUTPUT"
+          else
+            echo "prefix=$ROOT/" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ---- JDK & Gradle ----
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: "8.7"
+          build-root-directory: ${{ steps.find.outputs.root }}
+
+      # ---- 層 3: Wrapper が無ければ自動生成 ----
+      - name: Generate Gradle wrapper if missing
+        working-directory: ${{ steps.find.outputs.root }}
+        run: |
+          if [ ! -f gradlew ]; then
+            gradle wrapper --gradle-version 8.7 --distribution-type bin
+          fi
+          chmod +x gradlew
+
+      # ---- 署名キーの復元 (secrets が設定されていれば) ----
+      - name: Decode signing keystore (optional)
+        id: keystore
+        if: ${{ env.KEYSTORE_BASE64 != '' }}
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 -d > $RUNNER_TEMP/release.keystore
+          echo "path=$RUNNER_TEMP/release.keystore" >> "$GITHUB_OUTPUT"
+
+      # ---- ビルド: 署名版 / unsigned 版で分岐 ----
+      - name: Build release APK (signed)
+        if: ${{ steps.keystore.outputs.path != '' }}
+        working-directory: ${{ steps.find.outputs.root }}
+        env:
+          KEYSTORE_PATH: ${{ steps.keystore.outputs.path }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: ./gradlew assembleRelease --no-daemon --stacktrace
+
+      - name: Build release APK (unsigned)
+        if: ${{ steps.keystore.outputs.path == '' }}
+        working-directory: ${{ steps.find.outputs.root }}
+        run: ./gradlew assembleRelease --no-daemon --stacktrace
+
+      # ---- バージョンタグ付きでリネーム ----
+      - name: Rename APK with version tag
+        id: rename
+        working-directory: ${{ steps.find.outputs.root }}
+        run: |
+          TAG="${GITHUB_REF_NAME:-${{ github.event.inputs.tag }}}"
+          SRC=$(ls app/build/outputs/apk/release/*.apk | head -n1)
+          DST="app/build/outputs/apk/release/app-${TAG}.apk"
+          cp "$SRC" "$DST"
+          echo "apk=${{ steps.find.outputs.prefix }}$DST" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      # ---- 層 4: Artifact + GitHub Release ----
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release-${{ steps.rename.outputs.tag }}
+          path: ${{ steps.rename.outputs.apk }}
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.rename.outputs.apk }}
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+
+      # ---- 失敗時のデバッグ情報 ----
+      - name: Debug dump on failure
+        if: failure()
+        run: |
+          echo "=== File system ==="
+          find . -maxdepth 3 -not -path "./.git/*" | sort

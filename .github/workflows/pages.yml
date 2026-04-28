@@ -1,0 +1,190 @@
+name: Deploy Pages
+
+# 用途: ZIP配布された静的サイト or フロントエンドプロジェクトを GitHub Pages に公開する
+# 動作: ZIPがあれば自動展開 → 静的サイトかビルドが必要かを判定 → 必要ならビルド → Pages公開
+#
+# 対応ケース:
+#   A. index.html が直接置いてある静的サイト  → そのまま公開
+#   B. package.json があり "build" スクリプトがある → npm/yarn/pnpm でビルドして dist/build/out 等を公開
+
+on:
+  push:
+    branches: ["main", "master"]
+  workflow_dispatch:
+
+# GitHub Pages デプロイに必要な権限
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 同時実行は最新のもの優先 (Pages はキャンセルしない)
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build site
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      # ---- 層 0: 現状把握 ----
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show context
+        run: |
+          echo "=== Repository contents ==="
+          ls -la
+
+      # ---- 層 1: アーカイブ自動展開 (ZIP / tar.gz) ----
+      - name: Auto-extract archives
+        run: |
+          shopt -s nullglob
+          extracted=false
+          for z in *.zip; do
+            echo "📦 Extracting ZIP: $z"
+            unzip -oq "$z"
+            extracted=true
+          done
+          for t in *.tar.gz *.tgz; do
+            echo "📦 Extracting tarball: $t"
+            tar xzf "$t"
+            extracted=true
+          done
+          # 余計なファイルを除去
+          rm -rf __MACOSX
+          find . -name ".DS_Store" -delete 2>/dev/null || true
+          if [ "$extracted" = true ]; then
+            echo ""
+            echo "=== After extraction ==="
+            ls -la
+          fi
+
+      # ---- 層 2: サイト種別とプロジェクトルートを検出 ----
+      - name: Detect site type
+        id: detect
+        run: |
+          # ノイズ除外しつつ marker を探す
+          PKG=$(find . -maxdepth 4 -type f -name "package.json" \
+            -not -path "./.git/*" -not -path "*/node_modules/*" 2>/dev/null | head -n1)
+          INDEX=$(find . -maxdepth 4 -type f -name "index.html" \
+            -not -path "./.git/*" -not -path "*/node_modules/*" \
+            -not -path "*/dist/*" -not -path "*/build/*" 2>/dev/null | head -n1)
+
+          # package.json があり、かつ build スクリプトが定義されているか
+          HAS_BUILD_SCRIPT=false
+          if [ -n "$PKG" ]; then
+            if node -e "p=require('$PKG'); process.exit(p.scripts && p.scripts.build ? 0 : 1)" 2>/dev/null; then
+              HAS_BUILD_SCRIPT=true
+            fi
+          fi
+
+          if [ "$HAS_BUILD_SCRIPT" = "true" ]; then
+            ROOT=$(dirname "$PKG")
+            ROOT="${ROOT#./}"
+            [ -z "$ROOT" ] && ROOT="."
+            echo "✅ Node.js project at '$ROOT' — will run 'npm run build'"
+            echo "needs_build=true" >> "$GITHUB_OUTPUT"
+            echo "root=$ROOT" >> "$GITHUB_OUTPUT"
+          elif [ -n "$INDEX" ]; then
+            ROOT=$(dirname "$INDEX")
+            ROOT="${ROOT#./}"
+            [ -z "$ROOT" ] && ROOT="."
+            echo "✅ Static site at '$ROOT' (will publish as-is)"
+            echo "needs_build=false" >> "$GITHUB_OUTPUT"
+            echo "root=$ROOT" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Neither index.html nor package.json (with build script) was found."
+            echo "  - 静的サイトなら index.html をリポジトリに置いてください"
+            echo "  - フロントエンドプロジェクトなら package.json に \"scripts.build\" を定義してください"
+            exit 1
+          fi
+
+      # ---- 層 3a: Node.js プロジェクトのビルド (必要な場合のみ) ----
+      - name: Set up Node.js
+        if: steps.detect.outputs.needs_build == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install & build
+        if: steps.detect.outputs.needs_build == 'true'
+        working-directory: ${{ steps.detect.outputs.root }}
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          elif [ -f yarn.lock ]; then
+            corepack enable
+            yarn install --frozen-lockfile
+          elif [ -f pnpm-lock.yaml ]; then
+            corepack enable
+            pnpm install --frozen-lockfile
+          else
+            npm install
+          fi
+          npm run build
+
+      # ---- 層 4: 公開ディレクトリを確定 ----
+      # 静的サイト  → detect.outputs.root をそのまま公開
+      # ビルド済み  → root 配下の dist/build/out/public/_site のいずれかを公開
+      - name: Resolve publish directory
+        id: publish
+        run: |
+          ROOT="${{ steps.detect.outputs.root }}"
+          NEEDS_BUILD="${{ steps.detect.outputs.needs_build }}"
+
+          if [ "$NEEDS_BUILD" = "true" ]; then
+            for d in dist build out public _site .next/standalone; do
+              if [ "$ROOT" = "." ]; then
+                CHECK="$d"
+              else
+                CHECK="$ROOT/$d"
+              fi
+              if [ -d "$CHECK" ]; then
+                echo "✅ Publish directory: $CHECK"
+                echo "dir=$CHECK" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+            done
+            echo "::error::No build output directory found."
+            echo "  Looked for: dist, build, out, public, _site"
+            exit 1
+          else
+            echo "✅ Publish directory: $ROOT"
+            echo "dir=$ROOT" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ---- 層 5: Pages 用に成果物をアップロード ----
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ${{ steps.publish.outputs.dir }}
+
+      # ---- 失敗時のデバッグ情報 ----
+      - name: Debug dump on failure
+        if: failure()
+        run: |
+          echo "=== File system ==="
+          find . -maxdepth 3 -not -path "./.git/*" -not -path "*/node_modules/*" | sort
+          echo ""
+          echo "=== Detected ==="
+          echo "needs_build=${{ steps.detect.outputs.needs_build }}"
+          echo "root=${{ steps.detect.outputs.root }}"
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
