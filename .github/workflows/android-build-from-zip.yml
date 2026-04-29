@@ -1,0 +1,124 @@
+name: build
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Repository layout expected:
+#   .github/workflows/android-build.yml   <- this file
+#   gemma4-local-android.zip              <- Android project ZIP, kept zipped
+#
+# You do NOT need to unzip the Android project before pushing to GitHub.
+# The workflow unzips it, finds settings.gradle(.kts), then builds APK/AAB.
+
+env:
+  # Change this when the ZIP filename is different.
+  # If the file does not exist, the workflow will use the first .zip found in the repo.
+  SOURCE_ZIP: gemma4-local-android.zip
+  GRADLE_VERSION: 8.10.2
+  GRADLE_TASKS: ':app:assembleDebug :app:bundleRelease'
+
+jobs:
+  android-build:
+    name: Build APK and AAB from ZIP
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: ${{ env.GRADLE_VERSION }}
+
+      - name: Unzip Android project
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p extracted
+
+          ZIP_FILE="${SOURCE_ZIP}"
+          if [ ! -f "$ZIP_FILE" ]; then
+            echo "SOURCE_ZIP '${SOURCE_ZIP}' was not found. Searching for a .zip file..."
+            ZIP_FILE="$(find . -maxdepth 2 -type f -name '*.zip' ! -path './.git/*' | sort | head -n 1 || true)"
+          fi
+
+          if [ -z "${ZIP_FILE}" ] || [ ! -f "$ZIP_FILE" ]; then
+            echo "No ZIP file found. Put the Android project ZIP in the repository root."
+            exit 1
+          fi
+
+          echo "Using ZIP: $ZIP_FILE"
+          unzip -q "$ZIP_FILE" -d extracted
+
+          echo "Extracted files:"
+          find extracted -maxdepth 3 -type f | sort | sed 's#^#  #' | head -n 80
+
+      - name: Locate Gradle project
+        id: locate
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SETTINGS_FILE="$(find extracted -type f \( -name 'settings.gradle' -o -name 'settings.gradle.kts' \) | sort | head -n 1 || true)"
+
+          if [ -z "$SETTINGS_FILE" ]; then
+            echo "settings.gradle or settings.gradle.kts was not found inside the ZIP."
+            echo "Make sure the ZIP contains the Android project files, not another unrelated folder."
+            exit 1
+          fi
+
+          PROJECT_DIR="$(dirname "$SETTINGS_FILE")"
+          echo "Gradle project found at: $PROJECT_DIR"
+          echo "project_dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Accept Android SDK licenses
+        shell: bash
+        run: yes | sdkmanager --licenses >/dev/null || true
+
+      - name: Build APK and AAB
+        shell: bash
+        working-directory: ${{ steps.locate.outputs.project_dir }}
+        run: |
+          set -euo pipefail
+
+          if [ -f ./gradlew ]; then
+            chmod +x ./gradlew
+            ./gradlew ${GRADLE_TASKS} --stacktrace
+          else
+            gradle ${GRADLE_TASKS} --stacktrace
+          fi
+
+      - name: Upload APK/AAB artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-build-outputs
+          if-no-files-found: error
+          path: |
+            extracted/**/build/outputs/apk/**/*.apk
+            extracted/**/build/outputs/bundle/**/*.aab
+
+      - name: Create GitHub Release on tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            extracted/**/build/outputs/apk/**/*.apk
+            extracted/**/build/outputs/bundle/**/*.aab
