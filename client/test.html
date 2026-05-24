@@ -1,0 +1,625 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>gemma-bridge · client</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Fraunces:opsz,wght@9..144,400;9..144,700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0d0d0f;
+    --bg-elev: #131318;
+    --bg-elev-2: #1b1b22;
+    --line: #2a2a35;
+    --line-2: #3a3a48;
+    --fg: #e8e6df;
+    --fg-dim: #8a8a96;
+    --fg-dimmer: #555560;
+    --accent: #f4b942;      /* warm gemma yellow */
+    --accent-dim: #6a521e;
+    --bad: #e26060;
+    --good: #76c46a;
+    --user: #c7a6ff;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 13px;
+    line-height: 1.55;
+    overflow: hidden;
+  }
+
+  body {
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    background-image:
+      radial-gradient(circle at 8% 12%, rgba(244, 185, 66, 0.07) 0%, transparent 35%),
+      radial-gradient(circle at 92% 88%, rgba(199, 166, 255, 0.05) 0%, transparent 40%);
+  }
+
+  header {
+    border-bottom: 1px solid var(--line);
+    padding: 18px 28px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    backdrop-filter: blur(4px);
+    background: rgba(13, 13, 15, 0.6);
+  }
+  header h1 {
+    font-family: 'Fraunces', serif;
+    font-weight: 700;
+    font-size: 22px;
+    letter-spacing: -0.02em;
+    margin: 0;
+  }
+  header h1 .slash {
+    color: var(--accent);
+    font-style: italic;
+    margin: 0 6px;
+  }
+  header .meta {
+    color: var(--fg-dim);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+  }
+  header .status {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: 18px;
+  }
+  header .status .dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--fg-dimmer);
+    transition: background 0.2s;
+  }
+  header .status.ok    .dot { background: var(--good); box-shadow: 0 0 8px var(--good); }
+  header .status.fail  .dot { background: var(--bad);  box-shadow: 0 0 8px var(--bad); }
+
+  main {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    overflow: hidden;
+  }
+
+  /* ---------- sidebar / config ---------- */
+  aside {
+    border-right: 1px solid var(--line);
+    padding: 24px 24px 16px;
+    overflow-y: auto;
+    background: var(--bg-elev);
+  }
+  aside h2 {
+    font-family: 'Fraunces', serif;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.2em;
+    color: var(--fg-dim);
+    margin: 0 0 12px;
+  }
+  .field {
+    display: flex; flex-direction: column;
+    margin-bottom: 14px;
+  }
+  .field label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    color: var(--fg-dim);
+    margin-bottom: 6px;
+  }
+  .field input, .field textarea, .field select {
+    background: var(--bg);
+    border: 1px solid var(--line);
+    color: var(--fg);
+    font-family: inherit;
+    font-size: 12px;
+    padding: 9px 11px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  .field input:focus, .field textarea:focus, .field select:focus {
+    border-color: var(--accent);
+  }
+  .field input::placeholder {
+    color: var(--fg-dimmer);
+  }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .toggle {
+    display: flex; align-items: center; gap: 8px;
+    cursor: pointer;
+    user-select: none;
+    color: var(--fg-dim);
+    font-size: 11px;
+    margin-bottom: 8px;
+  }
+  .toggle input { accent-color: var(--accent); }
+
+  .btn-row {
+    display: flex; gap: 8px;
+    margin-top: 4px;
+  }
+  button {
+    background: transparent;
+    border: 1px solid var(--line-2);
+    color: var(--fg);
+    font-family: inherit;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    padding: 8px 14px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  button:hover { border-color: var(--accent); color: var(--accent); }
+  button.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--bg);
+    font-weight: 700;
+  }
+  button.primary:hover { background: #ffd066; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  hr {
+    border: 0;
+    border-top: 1px dashed var(--line);
+    margin: 22px 0;
+  }
+
+  .hint {
+    color: var(--fg-dimmer);
+    font-size: 10px;
+    line-height: 1.5;
+    margin-top: 6px;
+  }
+  .hint code {
+    color: var(--accent);
+    background: rgba(244, 185, 66, 0.08);
+    padding: 1px 4px;
+    border-radius: 2px;
+  }
+
+  /* ---------- chat pane ---------- */
+  section.chat {
+    display: grid;
+    grid-template-rows: 1fr auto;
+    overflow: hidden;
+  }
+  .stream {
+    overflow-y: auto;
+    padding: 32px 48px;
+    scroll-behavior: smooth;
+  }
+  .stream::-webkit-scrollbar { width: 8px; }
+  .stream::-webkit-scrollbar-thumb { background: var(--line-2); }
+
+  .turn {
+    margin-bottom: 24px;
+    max-width: 720px;
+  }
+  .turn .role {
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.3em;
+    color: var(--fg-dimmer);
+    margin-bottom: 6px;
+  }
+  .turn.user .role { color: var(--user); }
+  .turn.assistant .role { color: var(--accent); }
+  .turn.system .role { color: var(--fg-dim); }
+  .turn .body {
+    white-space: pre-wrap;
+    word-wrap: break-word;
+  }
+  .turn.user .body {
+    color: #ddd5ff;
+    border-left: 2px solid var(--user);
+    padding-left: 14px;
+  }
+  .turn.assistant .body {
+    color: var(--fg);
+    border-left: 2px solid var(--accent-dim);
+    padding-left: 14px;
+  }
+  .turn .body.thinking::after {
+    content: '▍';
+    color: var(--accent);
+    animation: blink 1s steps(2) infinite;
+    margin-left: 2px;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  .error {
+    color: var(--bad);
+    background: rgba(226, 96, 96, 0.08);
+    border: 1px solid rgba(226, 96, 96, 0.3);
+    padding: 10px 14px;
+    font-size: 12px;
+    margin-bottom: 16px;
+  }
+
+  /* ---------- composer ---------- */
+  form {
+    border-top: 1px solid var(--line);
+    padding: 16px 28px;
+    background: var(--bg-elev);
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 12px;
+  }
+  form textarea {
+    background: var(--bg);
+    border: 1px solid var(--line);
+    color: var(--fg);
+    font-family: inherit;
+    font-size: 13px;
+    padding: 10px 14px;
+    resize: none;
+    min-height: 44px;
+    max-height: 200px;
+    outline: none;
+  }
+  form textarea:focus { border-color: var(--accent); }
+
+  /* ---------- footer ---------- */
+  footer {
+    border-top: 1px solid var(--line);
+    padding: 6px 28px;
+    font-size: 10px;
+    color: var(--fg-dimmer);
+    display: flex;
+    justify-content: space-between;
+    background: var(--bg);
+  }
+
+  /* responsive: stack on mobile */
+  @media (max-width: 760px) {
+    main { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+    aside { border-right: 0; border-bottom: 1px solid var(--line); max-height: 200px; }
+    .stream { padding: 20px; }
+    form { padding: 12px 16px; }
+    header { padding: 12px 16px; }
+    header h1 { font-size: 18px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>gemma<span class="slash">/</span>bridge</h1>
+  </div>
+  <div>
+    <span class="meta">OpenAI-compatible local client</span>
+    <span id="status" class="status"><span class="dot"></span><span class="text">idle</span></span>
+  </div>
+</header>
+
+<main>
+  <aside>
+    <h2>Connection</h2>
+    <div class="field">
+      <label>Base URL</label>
+      <input id="baseUrl" type="text" placeholder="http://127.0.0.1:11434" />
+    </div>
+    <div class="field">
+      <label>API Key</label>
+      <input id="apiKey" type="password" placeholder="gma_live_..." />
+    </div>
+    <div class="field">
+      <label>Model</label>
+      <input id="model" type="text" placeholder="gemma" />
+    </div>
+    <div class="btn-row">
+      <button id="pingBtn">Ping</button>
+      <button id="modelsBtn">List models</button>
+    </div>
+    <div class="hint" id="connHint">Settings are saved locally in this browser.</div>
+
+    <hr>
+
+    <h2>Parameters</h2>
+    <div class="row">
+      <div class="field">
+        <label>Temperature</label>
+        <input id="temperature" type="number" step="0.1" min="0" max="2" value="0.7" />
+      </div>
+      <div class="field">
+        <label>Max tokens</label>
+        <input id="maxTokens" type="number" min="1" max="32768" value="512" />
+      </div>
+    </div>
+    <label class="toggle">
+      <input id="streamToggle" type="checkbox" checked />
+      stream response
+    </label>
+    <label class="toggle">
+      <input id="rawToggle" type="checkbox" />
+      log raw SSE to console
+    </label>
+
+    <hr>
+
+    <h2>System prompt</h2>
+    <div class="field">
+      <textarea id="systemPrompt" rows="4" placeholder="You are a helpful assistant.">You are a helpful assistant.</textarea>
+    </div>
+    <div class="btn-row">
+      <button id="clearBtn">Reset chat</button>
+    </div>
+  </aside>
+
+  <section class="chat">
+    <div id="stream" class="stream"></div>
+    <form id="composer">
+      <textarea id="input" placeholder="Send a message…   (Enter to send · Shift-Enter for newline)" autofocus></textarea>
+      <button class="primary" type="submit" id="sendBtn">Send</button>
+    </form>
+  </section>
+</main>
+
+<footer>
+  <span>v0.1.0</span>
+  <span id="lastTiming"></span>
+</footer>
+
+<script>
+  // ----- persistence -----
+  const els = {
+    baseUrl:      document.getElementById('baseUrl'),
+    apiKey:       document.getElementById('apiKey'),
+    model:        document.getElementById('model'),
+    temperature:  document.getElementById('temperature'),
+    maxTokens:    document.getElementById('maxTokens'),
+    streamToggle: document.getElementById('streamToggle'),
+    rawToggle:    document.getElementById('rawToggle'),
+    systemPrompt: document.getElementById('systemPrompt'),
+    pingBtn:      document.getElementById('pingBtn'),
+    modelsBtn:    document.getElementById('modelsBtn'),
+    clearBtn:     document.getElementById('clearBtn'),
+    composer:     document.getElementById('composer'),
+    input:        document.getElementById('input'),
+    sendBtn:      document.getElementById('sendBtn'),
+    stream:       document.getElementById('stream'),
+    status:       document.getElementById('status'),
+    statusText:   document.querySelector('#status .text'),
+    connHint:     document.getElementById('connHint'),
+    lastTiming:   document.getElementById('lastTiming'),
+  };
+
+  const STORE_KEY = 'gemma-bridge-client/v1';
+  function loadPrefs() {
+    try {
+      const p = JSON.parse(localStorage.getItem(STORE_KEY) || '{}');
+      els.baseUrl.value      = p.baseUrl      ?? 'http://127.0.0.1:11434';
+      els.apiKey.value       = p.apiKey       ?? '';
+      els.model.value        = p.model        ?? 'gemma';
+      els.temperature.value  = p.temperature  ?? '0.7';
+      els.maxTokens.value    = p.maxTokens    ?? '512';
+      els.streamToggle.checked = p.stream     ?? true;
+      els.rawToggle.checked  = p.raw          ?? false;
+      els.systemPrompt.value = p.system       ?? 'You are a helpful assistant.';
+    } catch { /* ignore */ }
+  }
+  function savePrefs() {
+    const p = {
+      baseUrl:     els.baseUrl.value,
+      apiKey:      els.apiKey.value,
+      model:       els.model.value,
+      temperature: els.temperature.value,
+      maxTokens:   els.maxTokens.value,
+      stream:      els.streamToggle.checked,
+      raw:         els.rawToggle.checked,
+      system:      els.systemPrompt.value,
+    };
+    localStorage.setItem(STORE_KEY, JSON.stringify(p));
+  }
+  ['baseUrl','apiKey','model','temperature','maxTokens','systemPrompt'].forEach(k =>
+    els[k].addEventListener('input', savePrefs));
+  ['streamToggle','rawToggle'].forEach(k =>
+    els[k].addEventListener('change', savePrefs));
+  loadPrefs();
+
+  // ----- status indicator -----
+  function setStatus(state, text) {
+    els.status.classList.remove('ok','fail');
+    if (state) els.status.classList.add(state);
+    els.statusText.textContent = text;
+  }
+
+  // ----- chat state -----
+  const history = []; // {role, content}
+
+  function renderTurn(role, content = '') {
+    const t = document.createElement('div');
+    t.className = `turn ${role}`;
+    const r = document.createElement('div');
+    r.className = 'role';
+    r.textContent = role;
+    const b = document.createElement('div');
+    b.className = 'body';
+    b.textContent = content;
+    t.appendChild(r);
+    t.appendChild(b);
+    els.stream.appendChild(t);
+    els.stream.scrollTop = els.stream.scrollHeight;
+    return b;
+  }
+
+  function renderError(msg) {
+    const e = document.createElement('div');
+    e.className = 'error';
+    e.textContent = msg;
+    els.stream.appendChild(e);
+    els.stream.scrollTop = els.stream.scrollHeight;
+  }
+
+  function clearChat() {
+    history.length = 0;
+    els.stream.innerHTML = '';
+    els.lastTiming.textContent = '';
+  }
+  els.clearBtn.addEventListener('click', clearChat);
+
+  // ----- API helpers -----
+  function headers() {
+    return {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + els.apiKey.value.trim(),
+    };
+  }
+
+  els.pingBtn.addEventListener('click', async () => {
+    setStatus(null, 'pinging…');
+    try {
+      const r = await fetch(els.baseUrl.value.replace(/\/$/, '') + '/health');
+      if (r.ok) {
+        const j = await r.json();
+        setStatus('ok', j.upstream ? `ok · upstream ${j.upstream}` : 'ok');
+      } else {
+        setStatus('fail', 'http ' + r.status);
+      }
+    } catch (e) {
+      setStatus('fail', 'unreachable');
+    }
+  });
+
+  els.modelsBtn.addEventListener('click', async () => {
+    setStatus(null, 'querying…');
+    try {
+      const r = await fetch(els.baseUrl.value.replace(/\/$/, '') + '/v1/models', {
+        headers: headers(),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(JSON.stringify(j));
+      const ids = (j.data || []).map(m => m.id).join(', ') || '(none)';
+      setStatus('ok', 'models: ' + ids);
+    } catch (e) {
+      setStatus('fail', e.message.slice(0, 60));
+    }
+  });
+
+  // ----- send -----
+  els.composer.addEventListener('submit', send);
+  els.input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      send(e);
+    }
+  });
+  els.input.addEventListener('input', () => {
+    els.input.style.height = 'auto';
+    els.input.style.height = Math.min(els.input.scrollHeight, 200) + 'px';
+  });
+
+  async function send(e) {
+    e.preventDefault();
+    const prompt = els.input.value.trim();
+    if (!prompt) return;
+    if (!els.apiKey.value.trim()) {
+      renderError('Set an API key first.');
+      return;
+    }
+
+    history.push({ role: 'user', content: prompt });
+    renderTurn('user', prompt);
+    els.input.value = '';
+    els.input.style.height = 'auto';
+
+    const messages = [];
+    if (els.systemPrompt.value.trim()) {
+      messages.push({ role: 'system', content: els.systemPrompt.value.trim() });
+    }
+    messages.push(...history);
+
+    const payload = {
+      model: els.model.value || 'gemma',
+      messages,
+      temperature: parseFloat(els.temperature.value),
+      max_tokens: parseInt(els.maxTokens.value, 10),
+      stream: els.streamToggle.checked,
+    };
+
+    els.sendBtn.disabled = true;
+    setStatus(null, 'generating…');
+    const t0 = performance.now();
+
+    const body = renderTurn('assistant', '');
+    body.classList.add('thinking');
+
+    try {
+      const r = await fetch(els.baseUrl.value.replace(/\/$/, '') + '/v1/chat/completions', {
+        method: 'POST', headers: headers(), body: JSON.stringify(payload),
+      });
+      if (!r.ok) {
+        const txt = await r.text();
+        throw new Error('HTTP ' + r.status + ': ' + txt.slice(0, 300));
+      }
+
+      let assistant = '';
+
+      if (!payload.stream) {
+        const j = await r.json();
+        assistant = j.choices?.[0]?.message?.content ?? '';
+        body.textContent = assistant;
+      } else {
+        const reader = r.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          if (els.rawToggle.checked) console.debug(buf);
+          const lines = buf.split('\n');
+          buf = lines.pop();
+          for (const line of lines) {
+            if (!line.startsWith('data:')) continue;
+            const data = line.slice(5).trim();
+            if (data === '[DONE]' || !data) continue;
+            try {
+              const j = JSON.parse(data);
+              const delta = j.choices?.[0]?.delta?.content ?? '';
+              if (delta) {
+                assistant += delta;
+                body.textContent = assistant;
+                els.stream.scrollTop = els.stream.scrollHeight;
+              }
+            } catch { /* skip malformed */ }
+          }
+        }
+      }
+
+      body.classList.remove('thinking');
+      history.push({ role: 'assistant', content: assistant });
+
+      const dt = ((performance.now() - t0) / 1000).toFixed(2);
+      els.lastTiming.textContent = `${assistant.length} chars · ${dt}s`;
+      setStatus('ok', 'ready');
+    } catch (err) {
+      body.classList.remove('thinking');
+      body.remove();
+      renderError(err.message);
+      setStatus('fail', 'error');
+      history.pop(); // remove the user turn that failed
+    } finally {
+      els.sendBtn.disabled = false;
+    }
+  }
+</script>
+</body>
+</html>
