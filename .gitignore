@@ -1,0 +1,23 @@
+# Model files are large and user-supplied; do not commit.
+models/*.gguf
+models/*.bin
+models/*.safetensors
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Android / Gradle
+android/.gradle/
+android/local.properties
+android/build/
+android/app/build/
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Bridge runtime state
+*.log
