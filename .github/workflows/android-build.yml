@@ -40,8 +40,12 @@ jobs:
         with:
           gradle-version: '8.7'
 
+      - name: Generate Gradle wrapper
+        run: gradle wrapper --gradle-version 8.7 --distribution-type bin
+        working-directory: ./android
+
       - name: Build debug APK
-        run: gradle assembleDebug --no-daemon --stacktrace
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
         working-directory: ./android
 
       - name: Upload APK
