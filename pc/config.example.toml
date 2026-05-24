@@ -1,0 +1,24 @@
+# gemma-bridge example config
+# Real config lives at:
+#   Linux/BSD:  ~/.config/gemma-bridge/config.toml
+#   macOS:      ~/Library/Application Support/gemma-bridge/config.toml
+#   Windows:    %APPDATA%\gemma-bridge\config.toml
+
+[listen]
+# Loopback only. Use a tunnel (Cloudflare / ngrok) for internet exposure.
+host = "127.0.0.1"
+port = 11434
+
+[upstream]
+# Where llama-server (or any OpenAI-compatible backend) is listening.
+# Start it separately, for example:
+#
+#   Windows:
+#     llama-server -m .\models\gemma-4-E2B-it-Q4_K_M.gguf --host 127.0.0.1 --port 8081
+#
+#   macOS / Linux:
+#     llama-server -m ./models/gemma-4-E2B-it-Q4_K_M.gguf --host 127.0.0.1 --port 8081
+base_url = "http://127.0.0.1:8081"
+
+[cors]
+allow_origins = ["*"]
